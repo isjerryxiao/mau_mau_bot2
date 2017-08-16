@@ -29,6 +29,7 @@ from telegram.ext import InlineQueryHandler, ChosenInlineResultHandler, \
 from telegram.ext.dispatcher import run_async
 
 from start_bot import start_bot
+
 from results import (add_call_bluff, add_choose_color, add_draw, add_gameinfo,
                      add_no_game, add_not_started, add_other_cards, add_pass,
                      add_card)
@@ -45,11 +46,41 @@ import settings
 
 from simple_commands import help
 
+from player import Player  # for ai players
 
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+ai_iterations = 100
+
+@run_async
+def send_async(bot, *args, **kwargs):
+    if 'timeout' not in kwargs:
+        kwargs['timeout'] = 2.5
+
+    try:
+        bot.sendMessage(*args, **kwargs)
+    except Exception as e:
+        error(None, None, e)
+
+
+@run_async
+def sticker_async(bot, *args, **kwargs):
+    if 'timeout' not in kwargs:
+        kwargs['timeout'] = 2.5
+
+    try:
+        bot.sendSticker(*args, **kwargs)
+    except Exception as e:
+        error(None, None, e)
+
+
+@run_async
+def answer_async(bot, *args, **kwargs):
+    if 'timeout' not in kwargs:
+        kwargs['timeout'] = 2.5
 
 
 @user_locale
@@ -136,6 +167,29 @@ def join_game(bot, update):
                    reply_to_message_id=update.message.message_id)
 
 
+def add_ai(bot, update):
+    """ Handler for the /add_ai command """
+    chat_id = update.message.chat_id
+    if update.message.chat.type == 'private':
+        help(bot, update)
+    else:
+        try:
+            game = gm.chatid_games[chat_id][-1]
+            if not game.open:
+                send_async(bot, chat_id, text="The lobby is closed")
+                return
+            else:
+                Player(game, None, ai=True)
+                send_async(bot, chat_id,
+                           text="Added computer player",
+                           reply_to_message_id=update.message.message_id)
+        except (KeyError, IndexError):
+            send_async(bot, chat_id,
+                       text="No game is running at the moment. "
+                            "Create a new game with /new",
+                       reply_to_message_id=update.message.message_id)
+
+
 @user_locale
 def leave_game(bot, update):
     """Handler for the /leave command"""
@@ -171,6 +225,7 @@ def leave_game(bot, update):
                            multi=game.translate).format(
                        name=display_name(game.current_player.user)),
                    reply_to_message_id=update.message.message_id)
+        ai_turn(bot, game)
 
 
 def select_game(bot, update):
@@ -283,6 +338,7 @@ def start_game(bot, update, args):
                                 timeout=TIMEOUT)
 
             send_first()
+            ai_turn(bot, game)
 
     elif len(args) and args[0] == 'select':
         players = gm.userid_players[update.message.from_user.id]
@@ -603,6 +659,7 @@ def process_result(bot, update):
         send_async(bot, chat.id,
                    text=__("Next player: {name}", multi=game.translate)
                    .format(name=display_name(game.current_player.user)))
+        ai_turn(bot, game)
 
 
 def reset_waiting_time(bot, player):
@@ -691,8 +748,12 @@ def do_call_bluff(bot, player):
     """Handles the bluff calling"""
     game = player.game
     chat = game.chat
+    if player.prev.ai:
+        send_async(bot, chat_id, text=__("Computer doesn't know bluffing yet",
+                               multi=game.translate))
+        return
 
-    if player.prev.bluffing:
+    elif player.prev.bluffing:
         send_async(bot, chat.id,
                    text=__("Bluff called! Giving 4 cards to {name}",
                            multi=game.translate)
@@ -720,6 +781,47 @@ def do_call_bluff(bot, player):
                                multi=game.translate))
 
     game.turn()
+    ai_turn(bot, game)
+
+
+def ai_turn(bot, game):
+    player = game.current_player
+    while player.ai:
+        reply = ''
+
+        from ISMCTS import UNOState, ISMCTS
+        chat_id = game.chat.id
+        state = UNOState(game)
+        move = ISMCTS(state, itermax=ai_iterations, verbose=False)
+        if move == 'draw':
+            reply += 'Drawing\n'
+        else:
+            sticker_async(bot, chat_id,
+                          sticker=c.STICKERS[str(move)])
+            if move.special:
+                reply += "Choosing color: %s\n" % display_color(move.color)
+
+        state.DoMove(move)
+        if len(player.cards) == 1:
+            reply += "UNO!\n"
+        if len(player.cards) == 0:
+            reply += "%s won!\n" % player.user.first_name
+            if len(game.players) < 3:
+                reply += "Game ended!"
+                gm.end_game(chat_id, player.next.user)
+            else:
+                player.leave()
+
+        player = game.current_player
+        if game in gm.chatid_games.get(chat_id, list()):
+            reply += "Next player: " + display_name(player.user)
+
+        send_async(bot, chat_id, text=reply)
+
+
+def set_ai_iterations(bot, update, args):
+    global ai_iterations
+    ai_iterations = int(args[0])
 
 
 # Add all handlers to the dispatcher and run the bot
@@ -738,6 +840,8 @@ dispatcher.add_handler(CommandHandler('disable_translations',
                                       disable_translations))
 dispatcher.add_handler(CommandHandler('skip', skip_player))
 dispatcher.add_handler(CommandHandler('notify_me', notify_me))
+dp.addHandler(CommandHandler('add_ai', add_ai))
+dp.addHandler(CommandHandler('set_ai', set_ai_iterations, pass_args=True))
 simple_commands.register()
 settings.register()
 dispatcher.add_handler(MessageHandler(Filters.status_update, status_update))

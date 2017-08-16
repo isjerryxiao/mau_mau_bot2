@@ -187,3 +187,17 @@ class GameManager(object):
                 return player
         else:
             return None
+
+        for player in the_game.players:
+            if player.ai:
+                continue
+            this_users_players = self.userid_players[player.user.id]
+            this_users_players.remove(player)
+            if len(this_users_players) is 0:
+                del self.userid_players[player.user.id]
+                del self.userid_current[player.user.id]
+            else:
+                self.userid_current[player.user.id] = this_users_players[0]
+
+        self.chatid_games[chat_id].remove(the_game)
+        return
