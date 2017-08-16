@@ -790,6 +790,7 @@ def ai_turn(bot, game):
         reply = ''
 
         from ISMCTS import UNOState, ISMCTS
+		from utils import display_color, display_name
         chat_id = game.chat.id
         state = UNOState(game)
         move = ISMCTS(state, itermax=ai_iterations, verbose=False)
@@ -840,8 +841,8 @@ dispatcher.add_handler(CommandHandler('disable_translations',
                                       disable_translations))
 dispatcher.add_handler(CommandHandler('skip', skip_player))
 dispatcher.add_handler(CommandHandler('notify_me', notify_me))
-dp.addHandler(CommandHandler('add_ai', add_ai))
-dp.addHandler(CommandHandler('set_ai', set_ai_iterations, pass_args=True))
+dispatcher.add_handler(CommandHandler('add_ai', add_ai))
+dispatcher.add_handler(CommandHandler('set_ai', set_ai_iterations, pass_args=True))
 simple_commands.register()
 settings.register()
 dispatcher.add_handler(MessageHandler(Filters.status_update, status_update))
